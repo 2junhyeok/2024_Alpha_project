@@ -231,12 +231,107 @@ def compute_auc_average(res, reverse, smoothing):
 
     auc /= num_videos
     return [auc]
+def compute_clip_auc(clip_res, reverse, smoothing):
+    dataset, clip_psnr_records, gt = load_psnr_gt(clip_res)
+    num_clips = len(clip_psnr_records)
+    clip_scores = np.array([], dtype=np.float32)
+    clip_labels = np.array([], dtype=np.int8)
 
+    for i in range(num_clips):
+        distance = clip_psnr_records[i]
+
+        if np.isnan(distance).all() or np.isinf(distance).all():
+            continue
+        if np.isnan(distance).any() or np.isinf(distance).any():
+            distance = np.nan_to_num(distance, nan=np.nanmean(distance))
+
+        if NORMALIZE:
+            min_val = distance.min()
+            max_val = distance.max()
+            if max_val > min_val:
+                distance = (distance - min_val) / (max_val - min_val)
+            else:
+                distance = np.zeros_like(distance)
+            if reverse:
+                distance = 1 - distance
+        if smoothing:
+            filter_2d = gaussian_filter_(np.arange(1, 50), 20)
+            padding_size = len(filter_2d) // 2
+            in_ = np.concatenate((distance[:padding_size], distance, distance[-padding_size:]))
+            distance = np.correlate(in_, filter_2d, 'valid')
+
+        clip_scores = np.concatenate((clip_scores[:], distance), axis=0)
+        clip_labels = np.concatenate((clip_labels[:], gt[i]), axis=0)
+
+    fpr, tpr, _ = metrics.roc_curve(clip_labels, clip_scores, pos_label=1)
+    auc = metrics.auc(fpr, tpr)
+    return RecordResult(fpr, tpr, auc, dataset)
+
+
+def load_clip_scores(results):
+    clip_scores = results.get('clips', None)
+    if clip_scores is None:
+        raise ValueError("No clip scores found in results.")
+    gt_loader = GroundTruthLoader()
+    gt = gt_loader(dataset=results['dataset'])
+    return results['dataset'], clip_scores, gt
+
+def compute_clip_auc(res, reverse=False, smoothing=True):
+    dataset, clip_records, gt = load_clip_scores(res)
+    num_clips = len(clip_records)
+    clip_scores = np.array([], dtype=np.float32)
+    labels = np.array([], dtype=np.int8)
+
+    for i in range(num_clips):
+        distance = clip_records[i]
+
+        if NORMALIZE:
+            min_val = distance.min()
+            max_val = distance.max()
+            if max_val > min_val:
+                distance = (distance - min_val) / (max_val - min_val)
+            else:
+                distance = np.zeros_like(distance)
+            if reverse:
+                distance = 1 - distance
+        if smoothing:
+            filter_2d = gaussian_filter_(np.arange(1, 50), 20)
+            padding_size = len(filter_2d) // 2
+            in_ = np.concatenate((distance[:padding_size], distance, distance[-padding_size:]))
+            distance = np.correlate(in_, filter_2d, 'valid')
+
+        clip_scores = np.concatenate((clip_scores[:], distance), axis=0)
+        labels = np.concatenate((labels[:], gt[i]), axis=0)
+
+    fpr, tpr, _ = metrics.roc_curve(labels, clip_scores, pos_label=1)
+    auc = metrics.auc(fpr, tpr)
+    return RecordResult(fpr, tpr, auc, dataset)
+
+
+
+def evaluate_all(res, reverse=True, smoothing=True):
+    # 기존 프레임 단위 AUC 계산
+    frame_result = compute_auc(res, reverse, smoothing)
+    frame_avg_result = compute_auc_average(res, reverse, smoothing)
+
+    # 클립 단위 AUC 계산 추가
+    clip_result = compute_clip_auc(res, reverse, smoothing)
+
+    # 결과 출력
+    print(f"Frame AUC: {frame_result.auc:.4f}, Avg Frame AUC: {frame_avg_result[0]:.4f}")
+    print(f"Clip AUC: {clip_result.auc:.4f}")
+
+    # 세 가지 결과를 반환
+    return frame_result, frame_avg_result, clip_result
+
+
+'''
 # Function to evaluate all results and return AUC and average AUC
 def evaluate_all(res, reverse=True, smoothing=True):
     result = compute_auc(res, reverse, smoothing)
     aver_result = compute_auc_average(res, reverse, smoothing)
-    return result, aver_result
+    return result, aver_result'''
+
 
 # Main entry point for the script
 if __name__ == '__main__':

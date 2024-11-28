@@ -4,6 +4,47 @@ import pickle
 from sklearn import metrics
 import matplotlib.pyplot as plt
 
+
+def Clip(loss, normalize=False):
+    clip_score = np.array(loss)
+    if normalize:
+        clip_score -= clip_score.min()
+        clip_score /= clip_score.max() if clip_score.max() != 0 else 1
+    else:
+        clip_score /= clip_score.max()
+    return clip_score
+
+get_score_type.update({"clip": Clip})
+
+
+def ComputeClipAUC(clip_loss, combine_type):
+    assert isinstance(clip_loss, dict), "Invalid clip loss file format."
+    clip_auc = {}
+
+    for t in combine_type:
+        assert t in get_score_type, f"The score type {t} is not defined."
+        labels = np.array([], dtype=np.float32)
+        scores = np.array([], dtype=np.float32)
+
+        for clip in clip_loss:
+            if 'gt' not in clip_loss[clip]:
+                print(f"Warning: Missing 'gt' in clip_loss[{clip}]")
+                continue
+            score = get_score_type[t](clip_loss[clip])
+            labels = np.concatenate((labels, clip_loss[clip]['gt']), axis=0)
+            scores = np.concatenate((scores, score), axis=0)
+
+        if len(labels) > 0 and len(scores) > 0:
+            fpr, tpr, thresholds = metrics.roc_curve(labels, scores, pos_label=0)
+            auc = metrics.auc(fpr, tpr)
+            clip_auc[t] = auc
+        else:
+            print(f"Warning: No valid labels or scores for type {t}")
+            clip_auc[t] = 0.0
+    return clip_auc
+
+
+
 def SVM_score(loss, normalize=False):
 
     score = np.array(loss)
