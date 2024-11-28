@@ -14,20 +14,18 @@ def video_label_length(dataset='DAD_Jigsaw'):
     label_path = "/home/work/Alpha/Jigsaw-VAD/DAD_Jigsaw/testing/frame_masks"
     video_length = {}
     files = sorted(os.listdir(label_path))
-    length = 0
     for f in files:
         label = np.load("{}/{}".format(label_path, f))
-        video_length[f.split(".")[0]] = label.shape[0] # 각 파일을 읽고, 그 파일의 프레임 길이를 video_length 딕셔너리에 저장
-        length += label.shape[0] # label.shape[0]는 해당 파일에 있는 프레임 수를 의미
+        video_length[f.split(".")[0]] = label.shape[0]  # 각 파일의 프레임 길이를 저장
     return video_length
 
 
 def score_smoothing(score, ws=43, function='mean', sigma=10):
-    assert ws % 2 == 1, 'window size must be odd' # 윈도우 크기 ws가 홀수여야 한다는 것을 보장
-    assert function in ['mean', 'gaussian'], 'wrong type of window function'
+    assert ws % 2 == 1, 'window size must be odd'
+    assert function in ['mean', 'gaussian'], 'Invalid window function type.'
 
     r = ws // 2
-    weight = np.ones(ws) # 윈도우 크기의 중앙 위치를 r에 저장하고, weight라는 크기 ws의 배열을 모두 1로 초기화
+    weight = np.ones(ws)
     for i in range(ws):
         if function == 'mean':
             weight[i] = 1. / ws
@@ -37,100 +35,96 @@ def score_smoothing(score, ws=43, function='mean', sigma=10):
     weight /= weight.sum()
     new_score = score.copy()
     new_score[r: score.shape[0] - r] = np.correlate(score, weight, mode='valid')
-    # 점수 score 배열에 가중치 weight를 사용하여 이동 평균을 계산하고, new_score에 저장함
-    # 이 작업은 np.correlate 함수를 사용하여 수행
     return new_score
 
 
 def load_frames(dataset, frame_num=7):
     root = '/home/work/Alpha/Jigsaw-VAD'
-    data_dir = os.path.join(root, dataset, 'testing', 'top_depth') # 수정 #
+    data_dir = os.path.join(root, dataset, 'testing', 'top_depth')
 
     file_list = sorted(os.listdir(data_dir))
     frames_list = []
     videos_list = []
-
-    total_frames = 0
-    videos = 0
     start_ind = frame_num // 2
 
     for video_file in file_list:
         if video_file not in videos_list:
             videos_list.append(video_file)
-        frame_list = os.listdir(data_dir + '/' + video_file)
-        videos += 1
-        length = len(frame_list)
-        total_frames += length # 각 비디오 디렉토리의 모든 프레임 파일을 읽고, 총 프레임 수를 계산
-        for frame in range(start_ind, length - start_ind):
+        frame_list = os.listdir(os.path.join(data_dir, video_file))
+        for frame in range(start_ind, len(frame_list) - start_ind):
             frames_list.append({"video_name": video_file, "frame": frame})
 
-    print(f"Loaded {videos} videos with {total_frames} frames in total.")
+    print(f"Loaded {len(videos_list)} videos with {len(frames_list)} frames in total.")
     return frames_list
 
-def remake_video_output(video_output, dataset='DAD_Jigsaw'): 
-    # 주어진 video_output 데이터를 spatial과 temporal로 나누어 점수를 계산하고, 그 결과를 반환
-    video_length = video_label_length(dataset=dataset) # video_label_length 함수를 사용하여 각 비디오의 프레임 길이를 가져옴
+
+def remake_video_output(video_output, dataset='DAD_Jigsaw'):
+    video_length = video_label_length(dataset=dataset)
     return_output_spatial = []
     return_output_temporal = []
     return_output_complete = []
-    video_l = sorted(list(video_output.keys())) # video 이름
-    for i in range(len(video_l)):
-        video = video_l[i]
+    return_output_clips = []  # 클립 단위 평가 결과 저장
+
+    video_l = sorted(video_output.keys())
+    for video in video_l:
         frame_record = video_output[video]
-        frame_l = sorted(list(frame_record.keys())) # frame 이름
-        video_ = np.ones(video_length[video]) 
-        #비디오의 점수를 저장할 video_ 배열을 1로 초기화
-        #각 비디오마다 점수를 저장할 배열을 생성
-        video2_ = np.ones(video_length[video])
+        frame_l = sorted(frame_record.keys())
+        video_spatial = np.ones(video_length[video])
+        video_temporal = np.ones(video_length[video])
+        clip_scores = []  # 클립 단위 점수를 저장할 리스트
 
-        local_max_ = 0
-        local_max2_ = 0
         for fno in frame_l:
-            clip_record = frame_record[fno]
-            clip_record = np.array(clip_record)
-            video_[fno], video2_[fno] = clip_record.min(0) # 각 spartial, temporal score
-            # 각 프레임의 점수 clip_record를 읽고, min 함수를 사용하여 최소 점수를 계산해 video_ 배열에 저장
+            clip_record = np.array(frame_record[fno])
+            video_spatial[fno], video_temporal[fno] = clip_record.min(0)
+            clip_scores.append(clip_record.mean(0))  # 클립 단위 평균 점수 계산
 
-            local_max_ = max(clip_record[:, 0].max(), local_max_)
-            local_max2_ = max(clip_record[:, 1].max(), local_max2_)
+        # 프레임 단위 점수 정규화
+        non_ones = (video_spatial != 1).nonzero()[0]
+        video_spatial[non_ones] = (video_spatial[non_ones] - video_spatial[non_ones].min()) / \
+                                  (video_spatial[non_ones].max() - video_spatial[non_ones].min())
 
-        # spatial
-        non_ones = (video_ != 1).nonzero()[0]
-        local_max_ = max(video_[non_ones])
-        video_[non_ones] = (video_[non_ones] - min(video_)) / (local_max_ - min(video_))
+        non_ones = (video_temporal != 1).nonzero()[0]
+        video_temporal[non_ones] = (video_temporal[non_ones] - video_temporal[non_ones].min()) / \
+                                   (video_temporal[non_ones].max() - video_temporal[non_ones].min())
 
-        # temporal
-        non_ones = (video2_ != 1).nonzero()[0]
-        local_max2_ = max(video2_[non_ones])
-        video2_[non_ones] = (video2_[non_ones] - min(video2_)) / (local_max2_ - min(video2_))
+        # 클립 단위 점수 정규화
+        clip_scores = np.array(clip_scores)
+        clip_scores[:, 0] = (clip_scores[:, 0] - clip_scores[:, 0].min()) / \
+                            (clip_scores[:, 0].max() - clip_scores[:, 0].min())
+        clip_scores[:, 1] = (clip_scores[:, 1] - clip_scores[:, 1].min()) / \
+                            (clip_scores[:, 1].max() - clip_scores[:, 1].min())
 
-        # spatial
-        video_ = score_smoothing(video_)
-        # temporal
-        video2_ = score_smoothing(video2_)
+        # 스무딩 처리
+        video_spatial = score_smoothing(video_spatial)
+        video_temporal = score_smoothing(video_temporal)
+        clip_scores = np.mean(clip_scores, axis=1)  # 클립 점수를 평균 내어 사용
 
-        # Store the results
-        return_output_spatial.append(video_)
-        return_output_temporal.append(video2_)
-
-        # Combined spatial and temporal results
-        combined_video = (video2_ + video_) / 2.0
+        # 결과 저장
+        return_output_spatial.append(video_spatial)
+        return_output_temporal.append(video_temporal)
+        return_output_clips.append(clip_scores)
+        combined_video = (video_spatial + video_temporal) / 2.0
         return_output_complete.append(combined_video)
 
-    return return_output_spatial, return_output_temporal, return_output_complete
+    return return_output_spatial, return_output_temporal, return_output_complete, return_output_clips
 
 
-def evaluate_auc(video_output, dataset='DAD_Jigsaw'):#
+def evaluate_auc(video_output, dataset='DAD_Jigsaw'):
     result_dict = {'dataset': dataset, 'psnr': video_output}
-    smoothed_results, aver_smoothed_result = evaluate.evaluate_all(result_dict, reverse=True, smoothing=True) # 수정 
-    print("(smoothing: True): {}  aver_result: {}".format(smoothed_results, aver_smoothed_result))
-    return smoothed_results, aver_smoothed_result
+    
+    # evaluate_all 호출로 프레임 및 클립 단위 결과를 모두 계산
+    frame_result, frame_avg_result, clip_result = evaluate.evaluate_all(result_dict, reverse=True, smoothing=True)
 
-#
+    print("(smoothing: True): Frame AUC: {}, Avg Frame AUC: {}, Clip AUC: {}".format(
+        frame_result.auc, frame_avg_result[0], clip_result.auc))
+    
+    return frame_result, frame_avg_result, clip_result
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Anomaly Prediction')
     parser.add_argument('--file', default=None, type=str, help='pkl file')
-    parser.add_argument('--dataset', default='ped2', type=str)
+    parser.add_argument('--dataset', default='DAD_Jigsaw', type=str)
     parser.add_argument('--frame_num', required=True, type=int)
 
     args = parser.parse_args()
@@ -138,10 +132,12 @@ if __name__ == '__main__':
     with open(args.file, 'rb') as f:
         output = pickle.load(f)
 
-    # Process video outputs based on the dataset type
-    video_output_spatial, video_output_temporal, video_output_complete = remake_video_output(output, dataset=args.dataset)
-    
-    # Evaluate AUC for spatial, temporal, and combined outputs
+    # Process video outputs
+    video_output_spatial, video_output_temporal, video_output_complete, video_output_clips = \
+        remake_video_output(output, dataset=args.dataset)
+
+    # Evaluate AUC
     evaluate_auc(video_output_spatial, dataset=args.dataset)
     evaluate_auc(video_output_temporal, dataset=args.dataset)
     evaluate_auc(video_output_complete, dataset=args.dataset)
+    evaluate_auc(video_output_clips, dataset=args.dataset)

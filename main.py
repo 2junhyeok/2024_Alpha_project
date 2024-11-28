@@ -202,34 +202,31 @@ def val(args, net=None):
     net.eval()
 
     video_output = {}
+    stacked_clips = [] # stack
+    
     for idx, data in enumerate(tqdm(testing_data_loader)):
         videos = data["video"]
         frames = data["frame"].tolist()
         clip = data["clip"].cuda(args.device)
 
-        with torch.no_grad():
+        with torch.no_grad(): # frame-level logit
             temp_logits, spat_logits = net(clip)
-            #print("Temp logits1:", temp_logits)
             if torch.isnan(temp_logits).any(): # 수정
                 print(f"NaN detected in output at batch {idx}")
                 print(f"Input statistics: min={data['clip'].min()}, max={data['clip'].max()}")
 
             temp_logits = temp_logits.view(-1, args.sample_num, args.sample_num)
-            #print("Temp logits2:", temp_logits)
-
             spat_logits = spat_logits.view(-1, 9, 9)
-
-        spat_probs = F.softmax(spat_logits, -1)
-        diag = torch.diagonal(spat_probs, offset=0, dim1=-2, dim2=-1)
-        scores = diag.min(-1)[0].cpu().numpy()
-        # spat_logits 값을 소프트맥스 함수(softmax)를 사용하여 확률로 변환하고, 주 대각선 요소를 선택하여 각 로짓의 최소값을 scores에 저장
-
+        # frame-level prob
         temp_probs = F.softmax(temp_logits, -1)
-        diag2 = torch.diagonal(temp_probs, offset=0, dim1=-2, dim2=-1)
-        #print(diag2.shape)
-        scores2 = diag2.min(-1)[0].cpu().numpy()
-        # temp_logits 값을 소프트맥스 함수(softmax)를 사용하여 확률로 변환하고, 주 대각선 요소를 선택하여 각 로짓의 최소값을 scores에 저장
-        
+        spat_probs = F.softmax(spat_logits, -1)
+        # frame-level diag
+        diag_temp = torch.diagonal(temp_probs, offset=0, dim1=-2, dim2=-1)
+        diag_spat = torch.diagonal(spat_probs, offset=0, dim1=-2, dim2=-1)
+        # frame-level score
+        frame_scores_temp = diag_temp.min(-1)[0].cpu().numpy()
+        frame_scores_spat = diag_spat.min(-1)[0].cpu().numpy()
+
         for video_, frame_, s_score_, t_score_  in zip(videos, frames, scores, scores2):
             #print(s_score_ ,' ' ,t_score_)
             if video_ not in video_output:
@@ -240,20 +237,60 @@ def val(args, net=None):
             #print(s_score_,t_score_)
         # video_output 딕셔너리에 video_, frame_을 키로 하고, s_score_, t_score_ 값을 저장하여 각 비디오와 프레임의 성능을 기록
 
+        stacked_clips.append(clip)
+        
+        if len(stacked_clips) == args.clip_num:
+            vad_dataset_clip = VideoAnomalyDataset_C3D_for_Clip(
+                clips=torch.stack(stacked_clips),
+                clip_num=args.clip_num,
+                static_threshold=args.static_threshold,
+                phase='testing'
+            )
+            vad_dataloader_clip = DataLoader(
+                vad_dataset_clip, batch_size = 256, shuffle = Flase, num_workers = 8, drop_last = False
+            )
+            for clip_data in vad_dataloader_clip:
+                batch_clips = clip_data["clips"].cuda(args.device)
+                
+                with torch.no_grad():
+                    clip_temp_logits, clip_spat_logits = net(batch_clip)
+                    
+                # clip-level prob
+                clip_temp_probs = F.softmax(clip_temp_logits, -1)
+                clip_spat_probs = F.softmax(clip_spat_logits, -1)
+                # clip-level diag
+                clip_diag_temp = torch.diagonal(clip_temp_probs, offset=0, dim1=-2, dim2=-1).min(-1)[0].cpu().numpy()
+                clip_diag_spat = torch.diagonal(clip_spat_probs, offset=0, dim1=-2, dim2=-1).min(-1)[0].cpu().numpy()
+                # clip-level score
+                clip_scores_temp = clip_diag_temp.min(-1)[0].cpu().numpy()
+                clip_scores_spat = clip_diag_spat.min(-1)[0].cpu().numpy()
+#####
+#수정 필요
+#####
+                for i, (video_, t_score_, s_score_) in enumerate(zip(videos, clip_scores_temp, clip_scores_spat)):
+                    if video_ not in video_output:
+                        video_output[video_] = {}
+                    frame_idx = frames[i]
+                    if frame_idx not in video_output[video_]:
+                        video_output[video_][frame_idx_] = []
+                    video_output[video_][frame_idx].append([t_score_, s_score_])
+            stacked_clips = [] # 초기화
+                
     micro_auc, macro_auc = save_and_evaluate(video_output, running_date, dataset=args.dataset)
     return micro_auc, macro_auc, running_date
 
-
+# 수정필요
 def save_and_evaluate(video_output, running_date, dataset='DAD_Jigsaw'):
     pickle_path = './log/video_output_ori_{}.pkl'.format(running_date)
     with open(pickle_path, 'wb') as write:
         pickle.dump(video_output, write, pickle.HIGHEST_PROTOCOL)
+    
     video_output_spatial, video_output_temporal, video_output_complete = remake_video_output(video_output, dataset=dataset)
     evaluate_auc(video_output_spatial, dataset=dataset)
     evaluate_auc(video_output_temporal, dataset=dataset)
     smoothed_res, smoothed_auc_list = evaluate_auc(video_output_complete, dataset=dataset)
     return smoothed_res.auc, np.mean(smoothed_auc_list)
-#
+
 
 if __name__ == '__main__':
     if not os.path.exists('checkpoint'):
