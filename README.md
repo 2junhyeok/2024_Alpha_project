@@ -65,8 +65,8 @@ tqdm
 
 1. Clone Repository
 ```bash
-git clone [repository-url]
-cd [project-name]
+git clone [[repository-url]](https://github.com/yugwangyeol/Self-Supervised-Learning-for-Video-Anomaly-Detection.git)
+cd Self-Supervised-Learning-for-Video-Anomaly-Detection
 ```
 
 2. Install Dependencies
@@ -126,7 +126,8 @@ python aggregate.py --file [output_pkl_file] --dataset DAD_Jigsaw --frame_num [n
 * combined 결과가 실제 적용 시에는 더 안정적인 결과를 제공할 수 있으리라 판단
 
 ## Contributors
-소속: 국민대학교 AI빅데이터융합경영학과 Alpha Project
+소속: 국민대학교 AI빅데이터융합경영학과 Alpha Project  
+
 팀원: 유광열, 김서령, 이준혁
 
 ## Ciation
