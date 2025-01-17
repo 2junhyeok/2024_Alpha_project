@@ -65,7 +65,7 @@ tqdm
 
 1. Clone Repository
 ```bash
-git clone [[repository-url]](https://github.com/yugwangyeol/Self-Supervised-Learning-for-Video-Anomaly-Detection.git)
+git clone https://github.com/yugwangyeol/Self-Supervised-Learning-for-Video-Anomaly-Detection.git
 cd Self-Supervised-Learning-for-Video-Anomaly-Detection
 ```
 
