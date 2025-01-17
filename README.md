@@ -36,7 +36,7 @@
 
 ## Technical Requirements
 
-### Dependencies
+### requirements
 ```bash
 torch
 torchvision
